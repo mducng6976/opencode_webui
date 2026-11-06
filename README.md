@@ -65,6 +65,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`).
 | `OpenCode: Set Server Password` | Store username and password for password-protected servers |
 | `OpenCode: Clear Server Password` | Remove stored credentials from the OS keychain |
 | `OpenCode: Start OpenCode Web Server` | Start the web server process (hidden if server is already running) |
+| `OpenCode: Start OpenCode Web Server with Proxy` | Open a PowerShell window, run `proxy-on`, then start the web server (Windows) |
 | `OpenCode: Stop OpenCode Web Server` | Stop the server process (only shown if the extension started it) |
 | `OpenCode: Settings` | Open the extension's settings (also available as a gear icon in the panel title bar) |
 | `OpenCode: Open File` | Open a file from the webview (used internally) |
@@ -78,6 +79,8 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`).
 | `opencode-sidebar.autoReconnect` | `true` | Automatically retry when the server is unreachable |
 | `opencode-sidebar.maxReconnectAttempts` | `0` | Maximum reconnection attempts (0 = unlimited) |
 | `opencode-sidebar.serverCommand` | `opencode serve --port 4096` | Shell command to start the server |
+| `opencode-sidebar.proxyOnCommand` | `proxy-on` | PowerShell command to run before starting the server when using **Start with Proxy** (Windows only) |
+| `opencode-sidebar.proxyShell` | `powershell.exe` | PowerShell executable used by **Start with Proxy** (set `pwsh.exe` for PowerShell 7) |
 | `opencode-sidebar.workspacePathStyle` | `none` | Path translation mode for workspace folder: `Do not translate` (pass raw path), `WSL / Linux` (convert `C:\...` to `/mnt/c/...` for WSL/Linux servers) |
 
 ## Panel controls
@@ -85,7 +88,7 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`).
 The panel has a **status bar** along the top:
 
 - **Status dot** — green (connected), amber (starting / password required), red (disconnected / reconnecting)
-- **Stop** — appears when the extension started the server; kills the process
+- **Stop** — appears when the extension started the server; kills the process (including the PowerShell window started by **Start with Proxy**)
 - **Refresh** — reloads the iframe
 - **Close** — closes the panel
 
@@ -97,7 +100,7 @@ The **panel title bar** (VS Code's built-in webview header) has a gear icon that
 |-------|-------------|
 | Connected | Green dot, iframe loads your OpenCode UI |
 | Password Required | Amber dot, lock icon + "Login" button in the panel |
-| Disconnected | Red dot, "Start OpenCode Web Server" + "Settings" buttons |
+| Disconnected | Red dot, "Start OpenCode Web Server" (+ "Start with Proxy" on Windows), "Servers" and "Settings" buttons |
 | Starting... | Amber dot, spinner while the server process starts |
 | Reconnecting... | Red dot, reconnection attempts with exponential backoff (1s → 2s → 4s → ... → 30s max); click **Cancel** to stop retrying |
 

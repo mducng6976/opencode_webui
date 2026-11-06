@@ -31,6 +31,7 @@
     "onCommand:opencode-sidebar.setPassword",
     "onCommand:opencode-sidebar.clearPassword",
     "onCommand:opencode-sidebar.startServer",
+    "onCommand:opencode-sidebar.startServerWithProxy",
     "onCommand:opencode-sidebar.stopServer"
   ],
   "main": "./out/extension.js",
@@ -91,6 +92,11 @@
       {
         "command": "opencode-sidebar.startServer",
         "title": "Start OpenCode Web Server",
+        "category": "OpenCode"
+      },
+      {
+        "command": "opencode-sidebar.startServerWithProxy",
+        "title": "Start OpenCode Web Server with Proxy",
         "category": "OpenCode"
       },
       {
@@ -217,6 +223,16 @@
           "default": "opencode serve --port 4096",
           "description": "Command to start the OpenCode web server (deprecated: use per-server serverCommand instead)"
         },
+        "opencode-sidebar.proxyOnCommand": {
+          "type": "string",
+          "default": "proxy-on",
+          "description": "PowerShell command to run before starting the OpenCode server when using 'Start OpenCode Web Server with Proxy' (Windows only)"
+        },
+        "opencode-sidebar.proxyShell": {
+          "type": "string",
+          "default": "powershell.exe",
+          "description": "PowerShell executable used for the proxy-enabled start on Windows (set to pwsh.exe for PowerShell 7)"
+        },
         "opencode-sidebar.workspacePathStyle": {
           "type": "string",
           "default": "none",
@@ -239,7 +255,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src",
     "pretest": "npm run compile && npm run lint",
-    "test": "node --test out/WorkspaceNavigation.test.js out/OpenCodeProjectBootstrap.test.js out/ServerCommand.test.js",
+    "test": "node --test out/WorkspaceNavigation.test.js out/OpenCodeProjectBootstrap.test.js out/ServerCommand.test.js out/ProxyLauncher.test.js",
     "publish:marketplace": "vsce package && vsce publish",
     "publish:openvsx": "bash -c \"read -p 'Enter packaged filename: ' filename && read -sp 'Enter openvsx token: ' token && echo && npx ovsx publish \\\"$filename\\\" -p \\\"$token\\\"\"",
     "publish": "npm version minor --no-git-tag-version && npm run publish:marketplace && npm run publish:openvsx"

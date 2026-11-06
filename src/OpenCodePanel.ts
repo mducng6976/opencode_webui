@@ -1,4 +1,7 @@
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { spawn, type ChildProcess } from 'child_process';
 import { getOrCreateProxy } from './ProxyServer';
 import {
@@ -10,6 +13,10 @@ import {
   parseServerPassword,
   stripAnsi,
 } from './ServerCommand';
+import {
+  buildProxyStartScript,
+  generateServerPassword,
+} from './ProxyLauncher';
 
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const PROXY_START_TIMEOUT_MS = 4000;
@@ -92,6 +99,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
   private _proxyBaseUrl: string | undefined;
   private _serverProcess: ChildProcess | undefined;
   private _serverProcessId = 0;
+  private _externalServerPid: number | undefined;
   private _startedByUs = false;
   private _log: vscode.OutputChannel;
   private _migrationDone = false;
@@ -503,6 +511,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
         case 'startServer':
           this.startServer();
           break;
+        case 'startServerWithProxy':
+          this.startServerWithProxy();
+          break;
         case 'stopServer':
           this.stopServer();
           break;
@@ -766,9 +777,13 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   dispose(): void {
     this._disposed = true;
-    if (this._startedByUs && this._serverProcess) {
+    if (this._startedByUs) {
       this.log('Killing server on deactivate');
-      this._killServerProcess();
+      if (this._serverProcess) {
+        this._killServerProcess();
+      } else {
+        this._killExternalServer();
+      }
     }
     this.stopProxy();
     this.stopPolling();
@@ -1074,6 +1089,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     const activeServer = this.getActiveServer();
     const canStartServer = !!activeServer
       && (activeServer.id === 'default' || !!activeServer.serverCommand);
+    const canStartWithProxy = canStartServer && process.platform === 'win32';
     let overlayContent: string;
     if (this._showServerSelector) {
       overlayContent = this.renderServerSelector();
@@ -1103,6 +1119,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
         '<div class="btn-row">' +
         (canStartServer
           ? '<button class="btn btn-default" onclick="startServer()">Start OpenCode Web Server</button>'
+          : '') +
+        (canStartWithProxy
+          ? '<button class="btn btn-outline" onclick="startServerWithProxy()">Start with Proxy</button>'
           : '') +
         '<button class="btn btn-outline" onclick="selectServer()">Servers</button>' +
         '<button class="btn btn-outline" onclick="openSettings()">Settings</button></div>'
@@ -1344,6 +1363,153 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     }
   }
 
+  async startServerWithProxy(): Promise<void> {
+    if (this._connectionState === 'connected' || this._connectionState === 'starting') {
+      return;
+    }
+    if (process.platform !== 'win32') {
+      this.log('Proxy-enabled start is only available on Windows');
+      await this.startServer();
+      return;
+    }
+
+    const state = await this.checkHealth();
+    if (state === 'connected' || state === 'auth-required') {
+      if (state === 'connected' && !this._proxyPort && !this._proxyBaseUrl) {
+        const proxyReady = await this.startProxy();
+        if (!proxyReady) {
+          this._connectionState = 'disconnected';
+          this.updateStatusBar();
+          this.sendStateUpdate();
+          return;
+        }
+      }
+      this._connectionState = state;
+      this._startedByUs = false;
+      vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
+      this.updateStatusBar();
+      this.maybeCreateWorkspaceSession();
+      this.sendStateUpdate();
+      return;
+    }
+
+    const cmdStr = this.getServerCommand();
+    if (!cmdStr) {
+      this.log('No server command configured');
+      return;
+    }
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    const config = vscode.workspace.getConfiguration('opencode-sidebar');
+    const proxyCommand = (config.get('proxyOnCommand', 'proxy-on') || 'proxy-on').trim();
+    const proxyShell = (config.get('proxyShell', 'powershell.exe') || 'powershell.exe').trim();
+    const password = this._passwordsCache.get(this._activeServerId)
+      || process.env.OPENCODE_SERVER_PASSWORD
+      || generateServerPassword();
+
+    const scriptPath = path.join(os.tmpdir(), `opencode-sidebar-proxy-${process.pid}.ps1`);
+    const pidFile = path.join(os.tmpdir(), `opencode-sidebar-proxy-${process.pid}.pid`);
+    try {
+      fs.rmSync(pidFile, { force: true });
+    } catch { /* ignore */ }
+
+    const script = buildProxyStartScript({
+      proxyCommand,
+      serverCommand: cmdStr,
+      password,
+      pidFile,
+    });
+
+    try {
+      // PowerShell 5.1 treats BOM-less scripts as ANSI, which corrupts paths
+      // containing non-ASCII characters.
+      fs.writeFileSync(scriptPath, `\ufeff${script}`, 'utf8');
+    } catch (err) {
+      this.log(`Failed to write proxy start script: ${err}`);
+      return;
+    }
+
+    this._capturedServerPassword = password;
+    this._externalServerPid = undefined;
+    this.loadCredentialsForActive();
+
+    this._connectionState = 'starting';
+    this._isReconnecting = false;
+    this._startedByUs = true;
+    vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', true);
+    this.updateStatusBar();
+    this.sendStateUpdate();
+    this.log(`Starting server with proxy: ${proxyCommand} -> ${cmdStr}`);
+
+    try {
+      // A visible PowerShell window is intentional: the user can see the
+      // proxy-on and opencode output and keep the session around.
+      const child = spawn(
+        `start "" "${proxyShell}" -NoExit -ExecutionPolicy Bypass -File "${scriptPath}"`,
+        {
+          cwd: workspaceFolder,
+          shell: true,
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false,
+        },
+      );
+      child.unref();
+    } catch (err) {
+      this.log(`Failed to open PowerShell: ${err}`);
+      this.cleanupServer();
+      return;
+    }
+
+    this.stopPolling();
+    this._pollTimer = setInterval(() => this.pollOnce(), 2000);
+    void this.watchExternalServerPid(pidFile);
+
+    const proxyReady = await this.startProxy();
+    if (!proxyReady) {
+      this._connectionState = 'disconnected';
+      this.updateStatusBar();
+      this.sendStateUpdate();
+      return;
+    }
+    await this.pollOnce();
+  }
+
+  private async watchExternalServerPid(pidFile: string): Promise<void> {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      try {
+        const raw = fs.readFileSync(pidFile, 'utf8').trim();
+        const pid = Number.parseInt(raw, 10);
+        if (Number.isFinite(pid) && pid > 0) {
+          if (!this._startedByUs) {
+            spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+              stdio: 'ignore',
+              windowsHide: true,
+            });
+            return;
+          }
+          this._externalServerPid = pid;
+          this.log(`PowerShell server process: ${pid}`);
+          return;
+        }
+      } catch { /* not written yet */ }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    this.log('Could not read the PowerShell server PID');
+  }
+
+  private _killExternalServer(): void {
+    if (!this._externalServerPid) { return; }
+    const pid = this._externalServerPid;
+    this._externalServerPid = undefined;
+    try {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+    } catch { /* ignore */ }
+  }
+
   private async onServerPasswordCaptured(id: number, password: string): Promise<void> {
     if (id !== this._serverProcessId || this._disposed) {
       return;
@@ -1358,10 +1524,14 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
   }
 
   async stopServer(): Promise<void> {
-    if (!this._startedByUs || !this._serverProcess) { return; }
+    if (!this._startedByUs) { return; }
 
     this.log('Stopping server process');
-    this._killServerProcess();
+    if (this._serverProcess) {
+      this._killServerProcess();
+    } else {
+      this._killExternalServer();
+    }
     this._startedByUs = false;
     this._capturedServerPassword = '';
     this.loadCredentialsForActive();
@@ -2188,6 +2358,10 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
     function startServer() {
       vscode.postMessage({ type: 'startServer' });
+    }
+
+    function startServerWithProxy() {
+      vscode.postMessage({ type: 'startServerWithProxy' });
     }
 
     function stopServer() {

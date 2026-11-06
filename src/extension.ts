@@ -80,6 +80,12 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('opencode-sidebar.startServerWithProxy', () => {
+      panel!.startServerWithProxy();
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('opencode-sidebar.stopServer', () => {
       panel!.stopServer();
     })
