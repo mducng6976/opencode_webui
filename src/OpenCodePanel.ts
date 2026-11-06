@@ -1071,6 +1071,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     }
 
     const url = this.getConfiguredUrl();
+    const activeServer = this.getActiveServer();
+    const canStartServer = !!activeServer
+      && (activeServer.id === 'default' || !!activeServer.serverCommand);
     let overlayContent: string;
     if (this._showServerSelector) {
       overlayContent = this.renderServerSelector();
@@ -1097,7 +1100,11 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
         '<div class="btn-row"><button class="btn btn-default" onclick="setPassword()">Login with Username &amp; Password</button></div>'
       ) : this._connectionState === 'disconnected' ? (
         '<span>OpenCode server is not reachable</span>' +
-        '<div class="btn-row"><button class="btn btn-default" onclick="selectServer()">Servers</button>' +
+        '<div class="btn-row">' +
+        (canStartServer
+          ? '<button class="btn btn-default" onclick="startServer()">Start OpenCode Web Server</button>'
+          : '') +
+        '<button class="btn btn-outline" onclick="selectServer()">Servers</button>' +
         '<button class="btn btn-outline" onclick="openSettings()">Settings</button></div>'
       ) : '';
 
@@ -1925,7 +1932,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     .overlay.hidden { display:none; }
     .overlay .lock-icon { font-size:32px; }
     .overlay code { font-size:12px; opacity:.8; }
-    .overlay .btn-row { display:flex; gap:8px; margin-top:4px; }
+    .overlay .btn-row { display:flex; gap:8px; margin-top:4px; flex-wrap:wrap; justify-content:center; }
     .overlay .oc-icon {
       display:flex; align-items:center; justify-content:center; opacity:.5;
       margin-bottom:8px;
