@@ -11,8 +11,15 @@ export function encodeOpenCodeRouteSegment(value: string): string {
     .replace(/=+$/, '');
 }
 
-export function getWorkspaceSessionPath(workspaceFolder: string): string {
-  return workspaceFolder ? `/${encodeOpenCodeRouteSegment(workspaceFolder)}/session` : '';
+/**
+ * OpenCode 2.x addresses a session with
+ * `/server/<base64url(serverUrl)>/session/<sessionID>`.
+ */
+export function getServerSessionPath(serverUrl: string, sessionId: string): string {
+  if (!serverUrl || !sessionId) {
+    return '';
+  }
+  return `/server/${encodeOpenCodeRouteSegment(serverUrl)}/session/${encodeURIComponent(sessionId)}`;
 }
 
 export function decideTrackedIframePath(
@@ -26,12 +33,12 @@ export function decideTrackedIframePath(
   if (!workspaceLaunchPending) {
     return { accept: true, completesWorkspaceLaunch: false };
   }
-  // The new UI can briefly restore its persisted home/tabs route before it
-  // turns the legacy workspace URL into a draft. Keep the launch authoritative
-  // until that draft or a concrete session is visible.
-  if (path === workspaceLaunchPath) {
-    return { accept: true, completesWorkspaceLaunch: false };
+  if (workspaceLaunchPath && path === workspaceLaunchPath) {
+    return { accept: true, completesWorkspaceLaunch: true };
   }
+  // OpenCode may restore its persisted home or tab route before our target
+  // session is rendered. Keep the launch authoritative until a concrete
+  // session (or its draft) is visible.
   if (isNewSessionDraftPath(path) || isConcreteSessionPath(path)) {
     return { accept: true, completesWorkspaceLaunch: true };
   }

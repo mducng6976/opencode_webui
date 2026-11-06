@@ -1,17 +1,21 @@
 {
-  "name": "opencode-web-sidebar",
-  "displayName": "OpenCode Sidebar GUI",
-  "description": "OpenCode web-UI in the sidebar panel - connects to your web server or starts a new one, adds narrow UI adaptations, multi-server management...",
-  "version": "0.21.0",
+  "name": "opencode-sidebar",
+  "displayName": "OpenCode Sidebar",
+  "description": "OpenCode 2.x web UI in the sidebar panel - connects to your server or starts one, captures generated passwords, opens your workspace session, and manages multiple servers...",
+  "version": "0.22.0",
   "license": "MIT",
-  "publisher": "bmpenuelas",
-  "homepage": "https://github.com/bmpenuelas/opencode-web-sidebar",
+  "publisher": "mducng6976",
+  "author": {
+    "name": "ducnm",
+    "email": "mducnguyen69760914@gmail.com"
+  },
+  "homepage": "https://github.com/mducng6976/opencode-web-sidebar",
   "bugs": {
-    "email": "bmpenuelas@gmail.com"
+    "url": "https://github.com/mducng6976/opencode-web-sidebar/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/bmpenuelas/opencode-web-sidebar.git"
+    "url": "https://github.com/mducng6976/opencode-web-sidebar.git"
   },
   "engines": {
     "vscode": "^1.106.0"
@@ -23,35 +27,35 @@
   "icon": "media/icon.png",
   "activationEvents": [
     "onStartupFinished",
-    "onCommand:opencode-web-sidebar.openPanel",
-    "onCommand:opencode-web-sidebar.setPassword",
-    "onCommand:opencode-web-sidebar.clearPassword",
-    "onCommand:opencode-web-sidebar.startServer",
-    "onCommand:opencode-web-sidebar.stopServer"
+    "onCommand:opencode-sidebar.openPanel",
+    "onCommand:opencode-sidebar.setPassword",
+    "onCommand:opencode-sidebar.clearPassword",
+    "onCommand:opencode-sidebar.startServer",
+    "onCommand:opencode-sidebar.stopServer"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
       "secondarySidebar": [
         {
-          "id": "opencode-web-sidebar",
+          "id": "opencode-sidebar",
           "title": "OpenCode",
           "icon": "media/icon.svg"
         }
       ]
     },
     "views": {
-      "opencode-web-sidebar": [
+      "opencode-sidebar": [
         {
           "type": "webview",
-          "id": "opencode-web-sidebar.view",
+          "id": "opencode-sidebar.view",
           "name": "OpenCode"
         }
       ]
     },
     "commands": [
       {
-        "command": "opencode-web-sidebar.openPanel",
+        "command": "opencode-sidebar.openPanel",
         "title": "Toggle OpenCode Panel",
         "category": "OpenCode",
         "icon": {
@@ -60,42 +64,42 @@
         }
       },
       {
-        "command": "opencode-web-sidebar.closePanel",
+        "command": "opencode-sidebar.closePanel",
         "title": "Close Panel",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.focusPanel",
+        "command": "opencode-sidebar.focusPanel",
         "title": "Focus Panel",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.openFile",
+        "command": "opencode-sidebar.openFile",
         "title": "Open File",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.setPassword",
+        "command": "opencode-sidebar.setPassword",
         "title": "Set Server Password",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.clearPassword",
+        "command": "opencode-sidebar.clearPassword",
         "title": "Clear Server Password",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.startServer",
+        "command": "opencode-sidebar.startServer",
         "title": "Start OpenCode Web Server",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.stopServer",
+        "command": "opencode-sidebar.stopServer",
         "title": "Stop OpenCode Web Server",
         "category": "OpenCode"
       },
       {
-        "command": "opencode-web-sidebar.openSettings",
+        "command": "opencode-sidebar.openSettings",
         "title": "Settings",
         "category": "OpenCode",
         "icon": "$(gear)"
@@ -104,28 +108,28 @@
     "menus": {
       "editor/title": [
         {
-          "command": "opencode-web-sidebar.openPanel",
+          "command": "opencode-sidebar.openPanel",
           "group": "navigation",
-          "when": "!config.opencode-web-sidebar.hideButton"
+          "when": "!config.opencode-sidebar.hideButton"
         }
       ],
       "view/title": [
         {
-          "command": "opencode-web-sidebar.openSettings",
-          "when": "view == opencode-web-sidebar.view",
+          "command": "opencode-sidebar.openSettings",
+          "when": "view == opencode-sidebar.view",
           "group": "navigation"
         }
       ],
       "commandPalette": [
         {
-          "command": "opencode-web-sidebar.stopServer",
-          "when": "opencode-web-sidebar.startedByUs"
+          "command": "opencode-sidebar.stopServer",
+          "when": "opencode-sidebar.startedByUs"
         }
       ]
     },
     "keybindings": [
       {
-        "command": "opencode-web-sidebar.openPanel",
+        "command": "opencode-sidebar.openPanel",
         "key": "ctrl+shift+o",
         "mac": "cmd+shift+o"
       }
@@ -133,12 +137,12 @@
     "configuration": {
       "title": "OpenCode Sidebar",
       "properties": {
-        "opencode-web-sidebar.url": {
+        "opencode-sidebar.url": {
           "type": "string",
           "default": "http://localhost:4096",
           "description": "URL of the OpenCode web UI to embed in the sidebar panel (deprecated: use servers list instead)"
         },
-        "opencode-web-sidebar.servers": {
+        "opencode-sidebar.servers": {
           "type": "array",
           "default": [
             {
@@ -147,7 +151,7 @@
               "label": "Local Server",
               "isWsl": false,
               "isDefault": true,
-              "serverCommand": "opencode web --port 4096"
+              "serverCommand": "opencode serve --port 4096"
             }
           ],
           "items": {
@@ -193,27 +197,27 @@
           },
           "description": "List of configured OpenCode servers"
         },
-        "opencode-web-sidebar.hideButton": {
+        "opencode-sidebar.hideButton": {
           "type": "boolean",
           "default": false,
           "description": "Hide the OpenCode button from the editor title bar"
         },
-        "opencode-web-sidebar.autoReconnect": {
+        "opencode-sidebar.autoReconnect": {
           "type": "boolean",
           "default": true,
           "description": "Automatically attempt to reconnect when the server is unreachable"
         },
-        "opencode-web-sidebar.maxReconnectAttempts": {
+        "opencode-sidebar.maxReconnectAttempts": {
           "type": "number",
           "default": 0,
           "description": "Maximum number of reconnection attempts (0 = unlimited)"
         },
-        "opencode-web-sidebar.serverCommand": {
+        "opencode-sidebar.serverCommand": {
           "type": "string",
-          "default": "opencode web --port 4096",
+          "default": "opencode serve --port 4096",
           "description": "Command to start the OpenCode web server (deprecated: use per-server serverCommand instead)"
         },
-        "opencode-web-sidebar.workspacePathStyle": {
+        "opencode-sidebar.workspacePathStyle": {
           "type": "string",
           "default": "none",
           "enum": [
@@ -235,7 +239,7 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint src",
     "pretest": "npm run compile && npm run lint",
-    "test": "node --test out/WorkspaceNavigation.test.js out/OpenCodeProjectBootstrap.test.js",
+    "test": "node --test out/WorkspaceNavigation.test.js out/OpenCodeProjectBootstrap.test.js out/ServerCommand.test.js",
     "publish:marketplace": "vsce package && vsce publish",
     "publish:openvsx": "bash -c \"read -p 'Enter packaged filename: ' filename && read -sp 'Enter openvsx token: ' token && echo && npx ovsx publish \\\"$filename\\\" -p \\\"$token\\\"\"",
     "publish": "npm version minor --no-git-tag-version && npm run publish:marketplace && npm run publish:openvsx"

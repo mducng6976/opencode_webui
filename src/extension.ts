@@ -11,40 +11,40 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.openPanel', async () => {
+    vscode.commands.registerCommand('opencode-sidebar.openPanel', async () => {
       if (panel!.isVisible) {
         await panel!.close();
-        await context.globalState.update('opencode-web-sidebar.panelOpen', false);
+        await context.globalState.update('opencode-sidebar.panelOpen', false);
         return;
       }
       await panel!.show();
-      await context.globalState.update('opencode-web-sidebar.panelOpen', true);
+      await context.globalState.update('opencode-sidebar.panelOpen', true);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.focusPanel', async () => {
+    vscode.commands.registerCommand('opencode-sidebar.focusPanel', async () => {
       await panel!.show();
-      await context.globalState.update('opencode-web-sidebar.panelOpen', true);
+      await context.globalState.update('opencode-sidebar.panelOpen', true);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.closePanel', async () => {
+    vscode.commands.registerCommand('opencode-sidebar.closePanel', async () => {
       await panel!.close();
-      await context.globalState.update('opencode-web-sidebar.panelOpen', false);
+      await context.globalState.update('opencode-sidebar.panelOpen', false);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.openFile', async (uri: vscode.Uri | string) => {
+    vscode.commands.registerCommand('opencode-sidebar.openFile', async (uri: vscode.Uri | string) => {
       const fileUri = typeof uri === 'string' ? vscode.Uri.parse(uri) : uri;
       await vscode.commands.executeCommand('vscode.open', fileUri);
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.setPassword', async () => {
+    vscode.commands.registerCommand('opencode-sidebar.setPassword', async () => {
       const username = await vscode.window.showInputBox({
         prompt: 'Enter username for the OpenCode server',
         value: panel!.cachedUsername || 'opencode',
@@ -66,7 +66,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.clearPassword', async () => {
+    vscode.commands.registerCommand('opencode-sidebar.clearPassword', async () => {
       await panel!.clearCredentials();
       panel!.render();
       vscode.window.showInformationMessage('OpenCode credentials cleared.');
@@ -74,36 +74,36 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.startServer', () => {
+    vscode.commands.registerCommand('opencode-sidebar.startServer', () => {
       panel!.startServer();
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.stopServer', () => {
+    vscode.commands.registerCommand('opencode-sidebar.stopServer', () => {
       panel!.stopServer();
     })
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand('opencode-web-sidebar.openSettings', () => {
-      vscode.commands.executeCommand('workbench.action.openSettings', 'opencode-web-sidebar');
+    vscode.commands.registerCommand('opencode-sidebar.openSettings', () => {
+      vscode.commands.executeCommand('workbench.action.openSettings', 'opencode-sidebar');
     })
   );
 
   vscode.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration('opencode-web-sidebar.url') ||
-        e.affectsConfiguration('opencode-web-sidebar.servers')) {
+    if (e.affectsConfiguration('opencode-sidebar.url') ||
+        e.affectsConfiguration('opencode-sidebar.servers')) {
       panel?.onUrlChanged();
     }
   });
 
   const hasFolder = !!(vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
-  const panelWasOpen = context.globalState.get<boolean>('opencode-web-sidebar.panelOpen', true);
+  const panelWasOpen = context.globalState.get<boolean>('opencode-sidebar.panelOpen', true);
 
   if (hasFolder && panelWasOpen) {
     setTimeout(() => {
-      vscode.commands.executeCommand('workbench.view.extension.opencode-web-sidebar');
+      vscode.commands.executeCommand('workbench.view.extension.opencode-sidebar');
     }, 500);
   } else if (!hasFolder) {
     setTimeout(() => {
@@ -117,7 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
     const hasFolderNow = !!(vscode.workspace.workspaceFolders && vscode.workspace.workspaceFolders.length > 0);
     if (hasFolderNow) {
       panel?.onWorkspaceFoldersChanged();
-      if (context.globalState.get<boolean>('opencode-web-sidebar.panelOpen', true)) {
+      if (context.globalState.get<boolean>('opencode-sidebar.panelOpen', true)) {
         panel?.show();
       }
     } else if (!hasFolderNow && panel?.isVisible) {

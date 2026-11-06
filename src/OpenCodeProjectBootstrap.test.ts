@@ -1,19 +1,26 @@
-import { strictEqual } from 'node:assert';
+import { deepStrictEqual, strictEqual } from 'node:assert';
 import { test } from 'node:test';
 import { runInNewContext } from 'node:vm';
 import {
-  OPENCODE_PROJECT_BOOTSTRAP_SCRIPT,
+  buildServerBootstrapScript,
   OPENCODE_SERVER_STATE_KEY,
 } from './OpenCodeProjectBootstrap';
-import { encodeOpenCodeRouteSegment } from './WorkspaceNavigation';
 
-function runBootstrap(pathname: string, initialState?: unknown): Map<string, string> {
+interface RunOptions {
+  origin?: string;
+  password?: string;
+  label?: string;
+  initialState?: unknown;
+}
+
+function runBootstrap(options: RunOptions = {}): Map<string, string> {
   const values = new Map<string, string>();
-  if (initialState !== undefined) {
-    values.set(OPENCODE_SERVER_STATE_KEY, JSON.stringify(initialState));
+  if (options.initialState !== undefined) {
+    values.set(OPENCODE_SERVER_STATE_KEY, JSON.stringify(options.initialState));
   }
-  const window = {
-    location: { pathname },
+  const origin = options.origin ?? 'http://127.0.0.1:4097';
+  const window: Record<string, unknown> = {
+    location: { origin },
     localStorage: {
       getItem(key: string) {
         return values.get(key) ?? null;
@@ -22,62 +29,77 @@ function runBootstrap(pathname: string, initialState?: unknown): Map<string, str
         values.set(key, value);
       },
     },
+    navigator: {},
+    caches: {
+      keys: () => Promise.resolve([]),
+      delete: () => Promise.resolve(true),
+    },
   };
-  const source = OPENCODE_PROJECT_BOOTSTRAP_SCRIPT
+  const source = buildServerBootstrapScript({ password: options.password, label: options.label })
     .replace(/^<script>\s*/, '')
     .replace(/\s*<\/script>$/, '');
-  runInNewContext(source, {
-    window,
-    Uint8Array,
-    TextDecoder,
-    atob,
-  });
+  runInNewContext(source, { window, Promise });
   return values;
 }
 
-test('registers an unseen compatibility-route workspace before OpenCode starts', () => {
-  const directory = 'C:\\Users\\demo\\new workspace';
-  const pathname = `/${encodeOpenCodeRouteSegment(directory)}/session`;
-  const values = runBootstrap(pathname, {
+test('seeds the proxy origin and password for OpenCode 2.x', () => {
+  const values = runBootstrap({ password: 'secret', label: 'Local Server' });
+  const state = JSON.parse(values.get(OPENCODE_SERVER_STATE_KEY) ?? '{}');
+
+  strictEqual(state.list.length, 1);
+  strictEqual(state.list[0].type, 'http');
+  strictEqual(state.list[0].http.url, 'http://127.0.0.1:4097');
+  strictEqual(state.list[0].http.password, 'secret');
+  strictEqual(state.list[0].displayName, 'Local Server');
+  deepStrictEqual(state.hidden, {});
+  deepStrictEqual(state.lastProjectID, {});
+  deepStrictEqual(state.usedProjectIDs, {});
+  deepStrictEqual(state.hostnames, {});
+  deepStrictEqual(state.projects, {});
+});
+
+test('updates the matching origin and keeps other servers', () => {
+  const initialState = {
+    list: [
+      { type: 'http', http: { url: 'http://127.0.0.1:4097', password: 'old' } },
+      { type: 'http', http: { url: 'http://example.test:4096' } },
+    ],
+    hidden: { other: true },
+    lastProjectID: { other: 'project' },
+    usedProjectIDs: { other: ['project'] },
+    hostnames: { other: 'host' },
+    projects: { other: { worktree: '/tmp/project' } },
+  };
+  const values = runBootstrap({ password: 'new', initialState });
+  const state = JSON.parse(values.get(OPENCODE_SERVER_STATE_KEY) ?? '{}');
+
+  strictEqual(state.list.length, 2);
+  strictEqual(state.list[0].http.password, 'new');
+  strictEqual(state.list[1].http.url, 'http://example.test:4096');
+  deepStrictEqual(state.hidden, { other: true });
+  strictEqual(state.lastProjectID.other, 'project');
+  strictEqual(state.usedProjectIDs.other[0], 'project');
+  strictEqual(state.hostnames.other, 'host');
+  strictEqual(state.projects.other.worktree, '/tmp/project');
+});
+
+test('drops state written by the pre-2.0 sidebar bootstrap', () => {
+  const initialState = {
     list: [],
-    projects: {
-      local: [{ worktree: 'C:\\Users\\demo\\existing', expanded: false }],
-    },
-    lastProject: { local: 'C:\\Users\\demo\\existing' },
-    recentlyClosed: { local: [directory] },
-    untouched: { value: true },
-  });
+    projects: { local: [{ worktree: 'C:/old' }] },
+    lastProject: { local: 'C:/old' },
+    recentlyClosed: { local: ['C:/old'] },
+  };
+  const values = runBootstrap({ initialState });
   const state = JSON.parse(values.get(OPENCODE_SERVER_STATE_KEY) ?? '{}');
 
-  strictEqual(state.projects.local[0].worktree, directory);
-  strictEqual(state.projects.local[0].expanded, true);
-  strictEqual(state.projects.local[1].worktree, 'C:\\Users\\demo\\existing');
-  strictEqual(state.lastProject.local, directory);
-  strictEqual(state.recentlyClosed.local.length, 0);
-  strictEqual(state.untouched.value, true);
+  deepStrictEqual(state.projects, {});
+  strictEqual('lastProject' in state, false);
+  strictEqual('recentlyClosed' in state, false);
 });
 
-test('does not duplicate a workspace already recorded with slash variations', () => {
-  const directory = 'C:\\Users\\demo\\project\\';
-  const pathname = `/${encodeOpenCodeRouteSegment(directory)}/session`;
-  const values = runBootstrap(pathname, {
-    projects: {
-      local: [{ worktree: 'C:/Users/demo/project', expanded: false }],
-    },
-  });
+test('omits the password when the server does not require one', () => {
+  const values = runBootstrap();
   const state = JSON.parse(values.get(OPENCODE_SERVER_STATE_KEY) ?? '{}');
-
-  strictEqual(state.projects.local.length, 1);
-  strictEqual(state.lastProject.local, directory);
-});
-
-test('supports UTF-8 workspace paths and ignores unrelated routes', () => {
-  const directory = '/home/demo/\u00e9tude';
-  const route = `/${encodeOpenCodeRouteSegment(directory)}/session`;
-  const registered = runBootstrap(route);
-  const state = JSON.parse(registered.get(OPENCODE_SERVER_STATE_KEY) ?? '{}');
-  strictEqual(state.projects.local[0].worktree, directory);
-
-  const ignored = runBootstrap('/new-session?draftId=draft_123');
-  strictEqual(ignored.has(OPENCODE_SERVER_STATE_KEY), false);
+  strictEqual('password' in state.list[0].http, false);
 });

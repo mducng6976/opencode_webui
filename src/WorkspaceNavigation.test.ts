@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import {
   decideTrackedIframePath,
   encodeOpenCodeRouteSegment,
-  getWorkspaceSessionPath,
+  getServerSessionPath,
 } from './WorkspaceNavigation';
 
 test('encodes OpenCode route segments as unpadded Base64URL', () => {
@@ -11,34 +11,35 @@ test('encodes OpenCode route segments as unpadded Base64URL', () => {
   strictEqual(encodeOpenCodeRouteSegment('࠾'), '4KC-');
 });
 
-test('builds a workspace new-session compatibility route', () => {
+test('builds an OpenCode 2.x server session route', () => {
   strictEqual(
-    getWorkspaceSessionPath('C:\\Users\\demo'),
-    '/QzpcVXNlcnNcZGVtbw/session',
+    getServerSessionPath('http://127.0.0.1:4097', 'ses_123'),
+    '/server/aHR0cDovLzEyNy4wLjAuMTo0MDk3/session/ses_123',
   );
-  strictEqual(getWorkspaceSessionPath(''), '');
+  strictEqual(getServerSessionPath('', 'ses_123'), '');
+  strictEqual(getServerSessionPath('http://127.0.0.1:4097', ''), '');
 });
 
-test('keeps a workspace launch pending at its compatibility route', () => {
-  const route = '/QzpcV29ya3NwYWNl/session';
+test('completes a workspace launch at its target session route', () => {
+  const route = getServerSessionPath('http://127.0.0.1:4097', 'ses_123');
   const decision = decideTrackedIframePath(route, true, route);
   strictEqual(decision.accept, true);
-  strictEqual(decision.completesWorkspaceLaunch, false);
+  strictEqual(decision.completesWorkspaceLaunch, true);
 });
 
 test('ignores restored home and unrelated tab routes during workspace launch', () => {
-  const route = '/QzpcV29ya3NwYWNl/session';
+  const route = getServerSessionPath('http://127.0.0.1:4097', 'ses_123');
   strictEqual(decideTrackedIframePath('/', true, route).accept, false);
   strictEqual(decideTrackedIframePath('/new-session', true, route).accept, false);
   strictEqual(decideTrackedIframePath('/settings', true, route).accept, false);
 });
 
-test('accepts the new UI draft redirect and concrete sessions', () => {
-  const route = '/QzpcV29ya3NwYWNl/session';
+test('accepts OpenCode 2.x drafts and concrete sessions', () => {
+  const route = getServerSessionPath('http://127.0.0.1:4097', 'ses_123');
   for (const path of [
     '/new-session?draftId=draft_123',
-    '/QzpcV29ya3NwYWNl/session/ses_123',
-    '/server/aHR0cDovL2xvY2FsaG9zdDo0MDk2/session/ses_123',
+    '/server/aHR0cDovL2xvY2FsaG9zdDo0MDk2/session/ses_456',
+    '/QzpcV29ya3NwYWNl/session/ses_456',
   ]) {
     const decision = decideTrackedIframePath(path, true, route);
     strictEqual(decision.accept, true);

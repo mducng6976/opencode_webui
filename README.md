@@ -1,10 +1,14 @@
-# OpenCode Sidebar GUI
+# OpenCode Sidebar
 
 Renders your [OpenCode](https://opencode.ai) web UI right inside VS Code's sidebar — connects to your server or starts a new one.
 
-💫 Now automatically opens a new session in your working project folder when the sidebar initializes!
+This fork targets the current **OpenCode 2.x** web UI (`opencode serve`), including its "connect to a server" flow and generated server password.
 
-Works with both the **new** and old OpenCode Web UI. Also available on [Android](https://play.google.com/store/apps/details?id=com.logicedge.opencodemobile) and [iOS](https://apps.apple.com/app/id6787161501) for coding away from your computer:
+> Forked from [bmpenuelas/opencode-web-sidebar](https://github.com/bmpenuelas/opencode-web-sidebar) and maintained by [ducnm](https://github.com/mducng6976).
+
+💫 Automatically opens the current project in a fresh session when the sidebar initializes!
+
+Also available on [Android](https://play.google.com/store/apps/details?id=com.logicedge.opencodemobile) and [iOS](https://apps.apple.com/app/id6787161501) for coding away from your computer:
 
 [![install Android](media/install_google_play_color_light.png)](https://play.google.com/store/apps/details?id=com.logicedge.opencodemobile) [![install iOS](media/install_app_store_color_light.png)](https://apps.apple.com/app/id6787161501)
 
@@ -13,39 +17,41 @@ Works with both the **new** and old OpenCode Web UI. Also available on [Android]
 ## Features
 
 - 🖥️ **Sidebar webview** — loads the OpenCode web UI in the secondary sidebar panel
-- 🛠️ **Multi-server support** — both local (can start the local server for you) and remote servers can be added and you can swtich between them
-- 💉 **Fixes for narrow display (sidebar)** — auto-hides the sessions list when clicking one
+- 🛠️ **Multi-server support** — both local (can start the local server for you) and remote servers can be added and you can switch between them
+- 🔗 **Automatic server connection** — seeds OpenCode 2.x's server list with the sidebar proxy, so the UI opens directly in your workspace instead of the "Connect to a server" screen
+- 🔑 **Generated password capture** — when the extension starts `opencode serve`, it reads the generated password from the process output and uses it automatically
+- 📍 **Workspace routing** — creates a session in the current VS Code folder and opens its OpenCode 2.x route, including folders never opened in OpenCode before
 - 🔔 **Status bar indicator** — shows connection state at a glance
-- 🚀 **Start/Stop server** — click a button to run `opencode web` if the server is not running; stop it when done
+- 🚀 **Start/Stop server** — click a button to run `opencode serve` if the server is not running; stop it when done
 - 🔃 **Auto-reconnect** — automatically retries when the server is unreachable (with Cancel button)
 - 🎨 **Theme sync** — follows VS Code's light/dark mode automatically
-- 🔑 **Password support** — credentials stored securely in your OS keychain via VS Code SecretStorage
+- 🔐 **Password support** — credentials stored securely in your OS keychain via VS Code SecretStorage
 - 🔐 **Env var fallback** — reads `OPENCODE_SERVER_PASSWORD` if no password is stored
-- 📁 **Open files** — open files in VS Code directly from the webview
 - 🌐 **Proxy** — local proxy strips frame-blocking headers for seamless iframe embedding and prevents losing the cursor focus while typing in files
-- 📍 **Workspace routing** — registers and opens the current VS Code folder through OpenCode's project URL, including folders never opened in the new web UI, and starts a fresh draft when the sidebar initializes or the workspace changes
 - 🔗 **Remote SSH** — works with [VSCode Remote SSH](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-ssh) via automatic port forwarding
 
 ## ❗ Important: requirements
 
-❌ This extension does not include or install `opencode` ➡️ You need to have `opencode` already installed and configured.
+❌ This extension does not include or install `opencode` ➡️ You need to have `opencode` 2.x already installed and configured.
 
-- If you want to start the `opencode web server` yourself this extension will connect to it automatically ➡️ Start the opencode web server in your preferred location (Local/LAN, Mac/Linux/Windows/WSL...), open the **OpenCode Sidebar** and it will connect to your server (you can customize the URL, user and password in the extension **Settings**).
-- This extension can also start the web server for you on this machine ➡️ Click **Start OpenCode Web Server**. It will start it only once and other windows can reuse the same web server.
+- If you want to start the `opencode serve` server yourself this extension will connect to it automatically ➡️ Start the OpenCode server in your preferred location (Local/LAN, Mac/Linux/Windows/WSL...), open the **OpenCode Sidebar** and it will connect to your server (you can customize the URL, user and password in the extension **Settings**).
+- This extension can also start the web server for you on this machine ➡️ Click **Start OpenCode Web Server**. It runs `opencode serve` in the current workspace, captures the generated password, and connects automatically.
 
 <br/>
 
 To start the web server:
 
-`opencode web --port 4096` To start the web server for your machine only.
+`opencode serve --port 4096` To start the web server for your machine only.
 
 `opencode serve --hostname 0.0.0.0 --port 4096` To start the web server and make it reachable in your whole LAN.
 
-ℹ️ If you run the web server on WSL or Linux, and run the extension on Windows, you need to enable path conversion via the `opencode-web-sidebar.workspacePathStyle` setting (set it to **WSL / Linux**).
+ℹ️ `opencode serve` prints a fresh password at startup (`server password ...`). When the extension starts the server it captures that password automatically. If you start the server yourself, copy the password into **OpenCode: Set Server Password**, or set `OPENCODE_SERVER_PASSWORD`.
+
+ℹ️ If you run the web server on WSL or Linux, and run the extension on Windows, you need to enable path conversion via the `opencode-sidebar.workspacePathStyle` setting (set it to **WSL / Linux**).
 
 <br/>
 
-For more opencode web server config info see the official docs for [OpenCode Web](https://opencode.ai/docs/web/).
+For more OpenCode server config info see the official docs for [OpenCode Web](https://opencode.ai/docs/web/).
 
 ## Commands
 
@@ -67,12 +73,12 @@ All commands are available via the Command Palette (`Ctrl+Shift+P`).
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `opencode-web-sidebar.url` | `http://localhost:4096` | URL of the OpenCode web UI to embed |
-| `opencode-web-sidebar.hideButton` | `false` | Hide the OpenCode icon from the editor title bar |
-| `opencode-web-sidebar.autoReconnect` | `true` | Automatically retry when the server is unreachable |
-| `opencode-web-sidebar.maxReconnectAttempts` | `0` | Maximum reconnection attempts (0 = unlimited) |
-| `opencode-web-sidebar.serverCommand` | `opencode web --port 4096` | Shell command to start the server (split by whitespace) |
-| `opencode-web-sidebar.workspacePathStyle` | `none` | Path translation mode for workspace folder: `Do not translate` (pass raw path), `WSL / Linux` (convert `C:\...` to `/mnt/c/...` for WSL/Linux servers) |
+| `opencode-sidebar.url` | `http://localhost:4096` | URL of the OpenCode web UI to embed |
+| `opencode-sidebar.hideButton` | `false` | Hide the OpenCode icon from the editor title bar |
+| `opencode-sidebar.autoReconnect` | `true` | Automatically retry when the server is unreachable |
+| `opencode-sidebar.maxReconnectAttempts` | `0` | Maximum reconnection attempts (0 = unlimited) |
+| `opencode-sidebar.serverCommand` | `opencode serve --port 4096` | Shell command to start the server |
+| `opencode-sidebar.workspacePathStyle` | `none` | Path translation mode for workspace folder: `Do not translate` (pass raw path), `WSL / Linux` (convert `C:\...` to `/mnt/c/...` for WSL/Linux servers) |
 
 ## Panel controls
 
@@ -99,8 +105,9 @@ The **panel title bar** (VS Code's built-in webview header) has a gear icon that
 
 If your OpenCode server is password-protected:
 
-- Run **`OpenCode: Set Server Password`** from the Command Palette.
-- Enter the username (defaults to `opencode`) and password.
+- When the extension starts `opencode serve` for you, it reads the generated password from the process output and uses it automatically.
+- For a server you started yourself, run **`OpenCode: Set Server Password`** from the Command Palette.
+- Enter the username (`opencode` for OpenCode 2.x) and password.
 - Credentials are stored in your OS keychain via VS Code SecretStorage.
 - Alternatively, set the `OPENCODE_SERVER_PASSWORD` environment variable and the extension will pick it up automatically.
 

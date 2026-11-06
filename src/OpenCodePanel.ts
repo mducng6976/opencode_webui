@@ -3,12 +3,18 @@ import { spawn, type ChildProcess } from 'child_process';
 import { getOrCreateProxy } from './ProxyServer';
 import {
   decideTrackedIframePath,
-  getWorkspaceSessionPath,
+  getServerSessionPath,
 } from './WorkspaceNavigation';
+import {
+  normalizeServerCommand,
+  parseServerPassword,
+  stripAnsi,
+} from './ServerCommand';
 
 const HEALTH_CHECK_TIMEOUT_MS = 3000;
 const PROXY_START_TIMEOUT_MS = 4000;
 const CONNECTION_RECHECK_TIMEOUT_MS = 6000;
+const WORKSPACE_SESSION_TIMEOUT_MS = 8000;
 
 function escapeAttr(text: string): string {
   return text
@@ -58,7 +64,7 @@ interface ServerConfig {
 }
 
 export class OpenCodePanel implements vscode.WebviewViewProvider {
-  public static readonly viewType = 'opencode-web-sidebar.view';
+  public static readonly viewType = 'opencode-sidebar.view';
 
   private _view: vscode.WebviewView | undefined;
   private _isVisible = false;
@@ -98,6 +104,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
   private _workspaceFolder = '';
   private _iframeNeedsNavigation = false;
   private _iframeWasConnected = false;
+  private _workspaceSessionRequest: Promise<void> | undefined;
+  private _workspaceSessionKey = '';
+  private _capturedServerPassword = '';
 
   private readonly _passwordsCache = new Map<string, string>();
 
@@ -108,9 +117,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
   ) {
     this._log = vscode.window.createOutputChannel('OpenCode Sidebar');
     this._statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-    this._statusBarItem.command = 'opencode-web-sidebar.focusPanel';
+    this._statusBarItem.command = 'opencode-sidebar.focusPanel';
     this.updateStatusBar();
-    vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', false);
+    vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
   }
 
   private log(msg: string): void {
@@ -121,7 +130,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     if (this._migrationDone) return;
     this._migrationDone = true;
 
-    const config = vscode.workspace.getConfiguration('opencode-web-sidebar');
+    const config = vscode.workspace.getConfiguration('opencode-sidebar');
     const inspect = config.inspect<ServerConfig[]>('servers');
     const hasExplicitServers = inspect?.globalValue !== undefined || inspect?.workspaceValue !== undefined
       || inspect?.workspaceFolderValue !== undefined;
@@ -136,13 +145,15 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     }
 
     const oldUrl = config.get<string>('url', 'http://localhost:4096');
-    const oldCmd = config.get<string>('serverCommand', 'opencode web --port 4096');
+    const oldCmd = normalizeServerCommand(
+      config.get<string>('serverCommand', 'opencode serve --port 4096'),
+    ) || 'opencode serve --port 4096';
     const oldWsl = config.get<'none' | 'wsl'>('workspacePathStyle', 'none');
 
     let servers: ServerConfig[] = [];
 
-    const oldUsername = await this._secrets.get('opencode-web-sidebar.username') || '';
-    const oldPassword = await this._secrets.get('opencode-web-sidebar.password') || '';
+    const oldUsername = await this._secrets.get('opencode-sidebar.username') || '';
+    const oldPassword = await this._secrets.get('opencode-sidebar.password') || '';
 
     this.log(`Migrating from old single-server config (url=${oldUrl})`);
 
@@ -159,10 +170,10 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     });
 
     if (oldPassword) {
-      await this._secrets.store(`opencode-web-sidebar.server.${localId}.password`, oldPassword);
-      await this._secrets.delete('opencode-web-sidebar.password');
+      await this._secrets.store(`opencode-sidebar.server.${localId}.password`, oldPassword);
+      await this._secrets.delete('opencode-sidebar.password');
     }
-    await this._secrets.delete('opencode-web-sidebar.username');
+    await this._secrets.delete('opencode-sidebar.username');
 
     await config.update('servers', servers, vscode.ConfigurationTarget.Global);
     this._servers = servers;
@@ -171,32 +182,48 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   private async loadServers(): Promise<void> {
     await this.migrateFromOldSettings();
+    const previousActiveId = this._activeServerId;
 
-    const config = vscode.workspace.getConfiguration('opencode-web-sidebar');
+    const config = vscode.workspace.getConfiguration('opencode-sidebar');
     const servers = config.get<ServerConfig[]>('servers', []);
     if (servers.length > 0) {
       this._servers = servers;
     }
 
+    let commandsChanged = false;
+    for (const server of this._servers) {
+      const normalized = normalizeServerCommand(server.serverCommand);
+      if (normalized !== server.serverCommand) {
+        server.serverCommand = normalized;
+        commandsChanged = true;
+      }
+    }
+    if (commandsChanged) {
+      await this.persistServers();
+    }
+
     for (const s of this._servers) {
       if (!this._passwordsCache.has(s.id)) {
-        const pass = await this._secrets.get(`opencode-web-sidebar.server.${s.id}.password`) || '';
+        const pass = await this._secrets.get(`opencode-sidebar.server.${s.id}.password`) || '';
         this._passwordsCache.set(s.id, pass);
       }
     }
 
-    const savedActive = this._globalState.get<string>('opencode-web-sidebar.activeServerId', '');
+    const savedActive = this._globalState.get<string>('opencode-sidebar.activeServerId', '');
     const defaultServer = this._servers.find(s => s.isDefault);
     if (savedActive && this._servers.find(s => s.id === savedActive)) {
       this._activeServerId = savedActive;
     } else if (defaultServer) {
       this._activeServerId = defaultServer.id;
-      await this._globalState.update('opencode-web-sidebar.activeServerId', this._activeServerId);
+      await this._globalState.update('opencode-sidebar.activeServerId', this._activeServerId);
     } else if (this._servers.length > 0) {
       this._activeServerId = this._servers[0].id;
-      await this._globalState.update('opencode-web-sidebar.activeServerId', this._activeServerId);
+      await this._globalState.update('opencode-sidebar.activeServerId', this._activeServerId);
     }
 
+    if (previousActiveId && previousActiveId !== this._activeServerId) {
+      this._capturedServerPassword = '';
+    }
     this.loadCredentialsForActive();
     this.log(`Active server: ${this._activeServerId}`);
   }
@@ -206,6 +233,12 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     this._cachedUsername = active?.username || '';
     this._cachedPassword = this._passwordsCache.get(this._activeServerId) || '';
     this._usingEnvPassword = false;
+    if (this._capturedServerPassword) {
+      this.log('Using password printed by the server process');
+      this._cachedUsername = this._cachedUsername || 'opencode';
+      this._cachedPassword = this._capturedServerPassword;
+      return;
+    }
     if (!this._cachedPassword && process.env.OPENCODE_SERVER_PASSWORD) {
       this.log('Using OPENCODE_SERVER_PASSWORD env var');
       this._cachedPassword = process.env.OPENCODE_SERVER_PASSWORD;
@@ -260,10 +293,11 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   private async saveServerPassword(serverId: string, password: string): Promise<void> {
     this.log(`Saving password for server ${serverId}`);
+    this._capturedServerPassword = '';
     if (password) {
-      await this._secrets.store(`opencode-web-sidebar.server.${serverId}.password`, password);
+      await this._secrets.store(`opencode-sidebar.server.${serverId}.password`, password);
     } else {
-      await this._secrets.delete(`opencode-web-sidebar.server.${serverId}.password`);
+      await this._secrets.delete(`opencode-sidebar.server.${serverId}.password`);
     }
     this._passwordsCache.set(serverId, password);
     if (serverId === this._activeServerId) {
@@ -276,7 +310,8 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   private async clearServerPassword(serverId: string): Promise<void> {
     this.log(`Clearing password for server ${serverId}`);
-    await this._secrets.delete(`opencode-web-sidebar.server.${serverId}.password`);
+    this._capturedServerPassword = '';
+    await this._secrets.delete(`opencode-sidebar.server.${serverId}.password`);
     this._passwordsCache.set(serverId, '');
     if (serverId === this._activeServerId) {
       this._cachedPassword = '';
@@ -287,7 +322,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
   }
 
   private async persistServers(): Promise<void> {
-    const config = vscode.workspace.getConfiguration('opencode-web-sidebar');
+    const config = vscode.workspace.getConfiguration('opencode-sidebar');
     await config.update('servers', this._servers, vscode.ConfigurationTarget.Global);
   }
 
@@ -309,12 +344,15 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       this.log('Stopping previously-started server on switch');
       this._killServerProcess();
       this._startedByUs = false;
-      vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', false);
+      vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
     }
 
     await this.commitPendingChanges(serverId);
+    if (serverId !== this._activeServerId) {
+      this._capturedServerPassword = '';
+    }
     this._activeServerId = serverId;
-    await this._globalState.update('opencode-web-sidebar.activeServerId', serverId);
+    await this._globalState.update('opencode-sidebar.activeServerId', serverId);
     this.loadCredentialsForActive();
     this.prepareWorkspaceLaunch(true);
 
@@ -451,13 +489,13 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       this.log(`Message from webview: ${JSON.stringify(msg)}`);
       switch (msg.type) {
         case 'closePanel':
-          vscode.commands.executeCommand('opencode-web-sidebar.openPanel');
+          vscode.commands.executeCommand('opencode-sidebar.openPanel');
           break;
         case 'openSettings':
-          vscode.commands.executeCommand('workbench.action.openSettings', 'opencode-web-sidebar');
+          vscode.commands.executeCommand('workbench.action.openSettings', 'opencode-sidebar');
           break;
         case 'setPassword':
-          vscode.commands.executeCommand('opencode-web-sidebar.setPassword');
+          vscode.commands.executeCommand('opencode-sidebar.setPassword');
           break;
         case 'refresh':
           await this.recheckConnection({ showChecking: true, reloadIframe: true });
@@ -501,7 +539,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
             }
             this._serverStatuses.clear();
             this._activeServerId = msg.serverId;
-            await this._globalState.update('opencode-web-sidebar.activeServerId', msg.serverId);
+            await this._globalState.update('opencode-sidebar.activeServerId', msg.serverId);
             this.loadCredentialsForActive();
             this.prepareWorkspaceLaunch(true);
             this._connectionState = 'checking';
@@ -514,8 +552,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
             if (state === 'connected' || state === 'auth-required') {
               this._connectionState = state;
               this._startedByUs = false;
-              vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', false);
+              vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
               this.updateStatusBar();
+              this.maybeCreateWorkspaceSession();
               this.sendStateUpdate();
             } else {
               await this.startServer();
@@ -616,7 +655,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   async show(): Promise<void> {
     if (this._isVisible) { return; }
-    await vscode.commands.executeCommand('workbench.view.extension.opencode-web-sidebar');
+    await vscode.commands.executeCommand('workbench.view.extension.opencode-sidebar');
   }
 
   async close(): Promise<void> {
@@ -682,6 +721,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     this._connectionState = state;
     this._isReconnecting = false;
     this.updateStatusBar();
+    this.maybeCreateWorkspaceSession();
 
     try {
       if (reloadIframe && state === 'connected') {
@@ -712,6 +752,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     this.log('Config changed, reloading servers');
     await this.loadServers();
     this.prepareWorkspaceLaunch(true);
+    await this.stopProxy();
     await this.recheckConnection({ showChecking: true });
   }
 
@@ -719,6 +760,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     if (!this.prepareWorkspaceLaunch(false)) {
       return;
     }
+    this.maybeCreateWorkspaceSession();
     this.safeSendStateUpdate();
   }
 
@@ -742,8 +784,12 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   private getServerCommand(): string {
     const active = this.getActiveServer();
-    if (active?.serverCommand) return active.serverCommand;
-    return vscode.workspace.getConfiguration('opencode-web-sidebar').get('serverCommand', 'opencode web --port 4096');
+    if (active?.serverCommand) {
+      return normalizeServerCommand(active.serverCommand) || active.serverCommand;
+    }
+    return normalizeServerCommand(
+      vscode.workspace.getConfiguration('opencode-sidebar').get('serverCommand', 'opencode serve --port 4096'),
+    ) || 'opencode serve --port 4096';
   }
 
   private getWorkspaceStyle(): 'none' | 'wsl' {
@@ -781,13 +827,197 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       return false;
     }
     this._workspaceFolder = workspaceFolder;
-    this._workspaceLaunchPath = getWorkspaceSessionPath(workspaceFolder);
-    this._workspaceLaunchPending = !!this._workspaceLaunchPath;
+    this._workspaceLaunchPath = '';
+    this._workspaceLaunchPending = !!workspaceFolder;
+    this._workspaceSessionKey = '';
+    this._workspaceSessionRequest = undefined;
     this._savedIframePath = '';
     this._iframeNeedsNavigation = true;
     this._iframeWasConnected = false;
-    this.log(`Prepared workspace navigation: ${this._workspaceLaunchPath || '/'}`);
+    this.log(`Prepared workspace navigation: ${workspaceFolder || '(none)'}`);
     return true;
+  }
+
+  private getProxyOrigin(): string {
+    if (this._proxyBaseUrl) {
+      try {
+        return new URL(this._proxyBaseUrl).origin;
+      } catch {
+        // Fall through to the local proxy address.
+      }
+    }
+    return this._proxyPort ? `http://127.0.0.1:${this._proxyPort}` : '';
+  }
+
+  private getWorkspaceSessionKey(): string {
+    return `${this._activeServerId}|${this._workspaceFolder}|${this.getProxyOrigin()}`;
+  }
+
+  private maybeCreateWorkspaceSession(): void {
+    if (this._connectionState !== 'connected') {
+      return;
+    }
+    if (!this._workspaceLaunchPending || this._workspaceSessionRequest || !this._proxyPort) {
+      return;
+    }
+    if (!this._workspaceFolder) {
+      this._workspaceLaunchPending = false;
+      this._savedIframePath = '/';
+      this.sendStateUpdate();
+      return;
+    }
+    const key = this.getWorkspaceSessionKey();
+    if (this._workspaceSessionKey === key) {
+      return;
+    }
+    this._workspaceSessionRequest = this.createWorkspaceSession(key).finally(() => {
+      this._workspaceSessionRequest = undefined;
+    });
+  }
+
+  private async createWorkspaceSession(key: string): Promise<void> {
+    const origin = this.getProxyOrigin();
+    if (!origin) {
+      return;
+    }
+    if (!this._workspaceFolder) {
+      this._workspaceLaunchPath = '';
+      this._savedIframePath = '/';
+      this._workspaceLaunchPending = false;
+      this.sendStateUpdate();
+      return;
+    }
+
+    try {
+      const sessionId = await this.requestWorkspaceSession(this._workspaceFolder);
+      if (key !== this.getWorkspaceSessionKey()) {
+        return;
+      }
+      if (!sessionId) {
+        throw new Error('server did not return a session id');
+      }
+      this._workspaceSessionKey = key;
+      this._workspaceLaunchPath = getServerSessionPath(origin, sessionId);
+      this._savedIframePath = this._workspaceLaunchPath;
+      this._workspaceLaunchPending = false;
+      this._iframeNeedsNavigation = true;
+      this.log(`Workspace session ready: ${sessionId}`);
+    } catch (err) {
+      if (key !== this.getWorkspaceSessionKey()) {
+        return;
+      }
+      this.log(`Could not create workspace session: ${err}`);
+      this._workspaceSessionKey = key;
+      this._workspaceLaunchPath = '';
+      this._savedIframePath = '/';
+      this._workspaceLaunchPending = false;
+      this._iframeNeedsNavigation = true;
+    }
+    this.safeSendStateUpdate();
+  }
+
+  private getApiBaseUrl(): string {
+    const parsed = new URL(this.getConfiguredUrl());
+    parsed.username = '';
+    parsed.password = '';
+    return parsed.toString().replace(/\/+$/, '');
+  }
+
+  private getApiHeaders(): Record<string, string> {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (this._cachedPassword) {
+      const encoded = Buffer.from(
+        `${this._cachedUsername || 'opencode'}:${this._cachedPassword}`,
+      ).toString('base64');
+      headers.authorization = `Basic ${encoded}`;
+    }
+    return headers;
+  }
+
+  private async requestWorkspaceSession(directory: string): Promise<string> {
+    const base = this.getApiBaseUrl();
+    const headers = this.getApiHeaders();
+
+    const reusable = await this.findReusableWorkspaceSession(base, headers, directory);
+    if (reusable) {
+      return reusable;
+    }
+
+    const response = await withTimeout(
+      fetch(`${base}/api/session`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ location: { directory } }),
+      }),
+      WORKSPACE_SESSION_TIMEOUT_MS,
+      'workspace session',
+    );
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json() as { data?: { id?: unknown } };
+    const id = payload?.data?.id;
+    return typeof id === 'string' ? id : '';
+  }
+
+  /**
+   * OpenCode creates real sessions server-side, unlike the old UI's client-side
+   * drafts. Reuse the newest session that is still empty so repeated panel
+   * opens do not litter the session list.
+   */
+  private async findReusableWorkspaceSession(
+    base: string,
+    headers: Record<string, string>,
+    directory: string,
+  ): Promise<string> {
+    try {
+      const listResponse = await withTimeout(
+        fetch(
+          `${base}/api/session?directory=${encodeURIComponent(directory)}&limit=8`,
+          { headers },
+        ),
+        WORKSPACE_SESSION_TIMEOUT_MS,
+        'workspace session list',
+      );
+      if (!listResponse.ok) {
+        return '';
+      }
+      const payload = await listResponse.json() as {
+        data?: Array<{
+          id?: unknown;
+          parentID?: unknown;
+          tokens?: { input?: number; output?: number; reasoning?: number };
+        }>;
+      };
+      const sessions = Array.isArray(payload.data) ? payload.data : [];
+      for (const session of sessions) {
+        if (typeof session.id !== 'string' || session.parentID) {
+          continue;
+        }
+        const tokens = session.tokens;
+        if ((tokens?.input ?? 0) !== 0 || (tokens?.output ?? 0) !== 0 || (tokens?.reasoning ?? 0) !== 0) {
+          continue;
+        }
+        const messageResponse = await withTimeout(
+          fetch(
+            `${base}/api/session/${encodeURIComponent(session.id)}/message?limit=1`,
+            { headers },
+          ),
+          WORKSPACE_SESSION_TIMEOUT_MS,
+          'workspace session messages',
+        ).catch(() => undefined);
+        if (!messageResponse?.ok) {
+          continue;
+        }
+        const messages = await messageResponse.json() as { data?: unknown[] };
+        if (Array.isArray(messages.data) && messages.data.length === 0) {
+          return session.id;
+        }
+      }
+    } catch (err) {
+      this.log(`Workspace session reuse check failed: ${err}`);
+    }
+    return '';
   }
 
   private trackIframePath(path: string): void {
@@ -950,7 +1180,14 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       }
       const targetUrl = parsed.toString();
       this.log(`Starting proxy for ${parsed.host}${this._cachedPassword ? ' (with auth)' : ' (no auth)'}`);
-      const handle = await withTimeout(getOrCreateProxy(targetUrl), PROXY_START_TIMEOUT_MS, 'proxy startup');
+      const handle = await withTimeout(
+        getOrCreateProxy(targetUrl, {
+          password: this._cachedPassword || undefined,
+          label: this.getActiveServer()?.label,
+        }),
+        PROXY_START_TIMEOUT_MS,
+        'proxy startup',
+      );
       if (opId !== this._proxyOperationId || this._disposed) {
         await handle.dispose();
         return false;
@@ -1018,8 +1255,9 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       }
       this._connectionState = state;
       this._startedByUs = false;
-      vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', false);
+      vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
       this.updateStatusBar();
+      this.maybeCreateWorkspaceSession();
       this.sendStateUpdate();
       return;
     }
@@ -1030,9 +1268,6 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       return;
     }
 
-    const parts = cmdStr.split(/\s+/);
-    const cmd = parts[0];
-    const args = parts.slice(1);
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 
     this.log(`Starting server: ${cmdStr}`);
@@ -1040,7 +1275,8 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     this._connectionState = 'starting';
     this._isReconnecting = false;
     this._startedByUs = true;
-    vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', true);
+    this._capturedServerPassword = '';
+    vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', true);
     this.updateStatusBar();
     this.sendStateUpdate();
 
@@ -1049,24 +1285,38 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
     try {
       const id = ++this._serverProcessId;
-      this._serverProcess = spawn(cmd, args, {
+      // Shell mode is required on Windows because npm installs `opencode` as a
+      // .cmd shim. It also keeps quoted arguments and user-defined commands
+      // working exactly as they would in a terminal.
+      this._serverProcess = spawn(cmdStr, {
         cwd: workspaceFolder,
+        shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
       });
 
-      this._serverProcess.stdout?.on('data', (data: Buffer) => {
-        for (const line of data.toString().split('\n')) {
-          const trimmed = line.trim();
-          if (trimmed) { this.log(`[server] ${trimmed}`); }
+      let outputBuffer = '';
+      const handleOutput = (data: Buffer) => {
+        outputBuffer += data.toString();
+        const lines = outputBuffer.split(/\r?\n/);
+        outputBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const trimmed = stripAnsi(line).trim();
+          if (!trimmed) { continue; }
+          const password = parseServerPassword(trimmed);
+          if (password) {
+            this.log('[server] server password [redacted]');
+            if (password !== this._capturedServerPassword) {
+              void this.onServerPasswordCaptured(id, password);
+            }
+          } else {
+            this.log(`[server] ${trimmed}`);
+          }
         }
-      });
+      };
 
-      this._serverProcess.stderr?.on('data', (data: Buffer) => {
-        for (const line of data.toString().split('\n')) {
-          const trimmed = line.trim();
-          if (trimmed) { this.log(`[server] ${trimmed}`); }
-        }
-      });
+      this._serverProcess.stdout?.on('data', handleOutput);
+      this._serverProcess.stderr?.on('data', handleOutput);
 
       this._serverProcess.on('error', (err) => {
         if (id !== this._serverProcessId) { return; }
@@ -1087,20 +1337,46 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     }
   }
 
+  private async onServerPasswordCaptured(id: number, password: string): Promise<void> {
+    if (id !== this._serverProcessId || this._disposed) {
+      return;
+    }
+    this._capturedServerPassword = password;
+    this.loadCredentialsForActive();
+    this.log('Captured the server password and updated credentials');
+    // The server generated a fresh password, so the proxy must be restarted
+    // with the new Authorization header before the web UI can connect.
+    await this.restartProxy();
+    await this.pollOnce();
+  }
+
   async stopServer(): Promise<void> {
     if (!this._startedByUs || !this._serverProcess) { return; }
 
     this.log('Stopping server process');
     this._killServerProcess();
     this._startedByUs = false;
-    vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', false);
+    this._capturedServerPassword = '';
+    this.loadCredentialsForActive();
+    vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
     await this.pollOnce();
   }
 
   private _killServerProcess(): void {
     if (!this._serverProcess) { return; }
-    this._serverProcess.kill('SIGTERM');
     const proc = this._serverProcess;
+    try {
+      if (process.platform === 'win32' && proc.pid) {
+        // The server runs behind a cmd.exe shim. Kill the whole tree so the
+        // actual opencode process does not survive in the background.
+        spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], {
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+      } else {
+        proc.kill('SIGTERM');
+      }
+    } catch { /* ignore */ }
     setTimeout(() => {
       try {
         if (proc && !proc.killed) { proc.kill('SIGKILL'); }
@@ -1112,7 +1388,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
   private cleanupServer(): void {
     if (!this._startedByUs) { return; }
     this._startedByUs = false;
-    vscode.commands.executeCommand('setContext', 'opencode-web-sidebar.startedByUs', false);
+    vscode.commands.executeCommand('setContext', 'opencode-sidebar.startedByUs', false);
     if (this._connectionState === 'starting') {
       this._connectionState = 'disconnected';
       this.updateStatusBar();
@@ -1199,40 +1475,61 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     this.sendStateUpdate();
   }
 
-  private getHealthUrl(): string {
+  private getBaseUrl(): string {
     const base = this.getConfiguredUrl();
-    if (!base) return '';
-    return base.replace(/\/+$/, '') + '/global/health';
+    return base ? base.replace(/\/+$/, '') : '';
   }
 
   private async checkHealth(): Promise<ConnectionState> {
-    const url = this.getHealthUrl();
-    if (!url) { return 'disconnected'; }
+    const base = this.getBaseUrl();
+    if (!base) { return 'disconnected'; }
 
+    // OpenCode 2.x answers 401 on /api/info when credentials are required,
+    // while the SPA catch-all happily returns the HTML shell for any unknown
+    // path. Probe the API first so a wrong password is reported as such.
+    const apiState = await this.probeHealth(`${base}/api/info`);
+    if (apiState === 'connected' || apiState === 'auth-required') {
+      return apiState;
+    }
+    if (apiState === 'disconnected') {
+      return 'disconnected';
+    }
+
+    // Older servers do not expose /api/info.
+    const legacyState = await this.probeHealth(`${base}/global/health`);
+    return legacyState === 'missing' ? 'disconnected' : legacyState;
+  }
+
+  private async probeHealth(url: string): Promise<ConnectionState | 'missing'> {
     try {
-      const resp = await fetch(url, {
+      let resp = await fetch(url, {
         signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
         method: 'HEAD',
       });
-      this.log(`Health check (no auth): ${resp.status}`);
-      if (resp.ok) { return 'connected'; }
+      this.log(`Health check (${new URL(url).pathname}, no auth): ${resp.status}`);
+
+      if (resp.status === 404) {
+        return 'missing';
+      }
 
       if (resp.status === 401 && this._cachedPassword) {
-        const encoded = Buffer.from(`${this._cachedUsername || 'opencode'}:${this._cachedPassword}`).toString('base64');
+        const encoded = Buffer.from(
+          `${this._cachedUsername || 'opencode'}:${this._cachedPassword}`,
+        ).toString('base64');
         try {
-          const authResp = await fetch(url, {
+          resp = await fetch(url, {
             method: 'HEAD',
             signal: AbortSignal.timeout(HEALTH_CHECK_TIMEOUT_MS),
             headers: { 'Authorization': `Basic ${encoded}` },
           });
-          this.log(`Health check (with auth): ${authResp.status}`);
-          if (authResp.ok) { return 'connected'; }
+          this.log(`Health check (${new URL(url).pathname}, with auth): ${resp.status}`);
         } catch (err) {
           this.log(`Health check (with auth) failed: ${err}`);
           return 'auth-required';
         }
       }
 
+      if (resp.ok) { return 'connected'; }
       if (resp.status === 401) { return 'auth-required'; }
       if (resp.status >= 500) {
         this.log(`Health check: upstream unavailable (${resp.status})`);
@@ -1313,6 +1610,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
         this._connectionState = state;
       }
       this.updateStatusBar();
+      this.maybeCreateWorkspaceSession();
       if (gen === this._serverGeneration) {
         this.sendStateUpdate();
       }
@@ -1375,7 +1673,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
 
   private scheduleReconnect(): void {
     if (this._disposed) { return; }
-    const autoReconnect = vscode.workspace.getConfiguration('opencode-web-sidebar').get('autoReconnect', true);
+    const autoReconnect = vscode.workspace.getConfiguration('opencode-sidebar').get('autoReconnect', true);
     if (!autoReconnect) {
       this._isReconnecting = false;
       this.updateStatusBar();
@@ -1383,7 +1681,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
       return;
     }
 
-    const maxAttempts = vscode.workspace.getConfiguration('opencode-web-sidebar').get('maxReconnectAttempts', 0);
+    const maxAttempts = vscode.workspace.getConfiguration('opencode-sidebar').get('maxReconnectAttempts', 0);
     if (maxAttempts > 0 && this._reconnectAttempts >= maxAttempts) {
       this._isReconnecting = false;
       this.updateStatusBar();
@@ -1413,6 +1711,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
         this._connectionState = state;
         this._reconnectAttempts = 0;
         this.updateStatusBar();
+        this.maybeCreateWorkspaceSession();
         this.sendStateUpdate();
       } else {
         this.scheduleReconnect();
@@ -1808,7 +2107,7 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     <a onclick="closePanel()">Close</a>
   </div>
 
-  <iframe id="ocFrame" onload="sendWorkspace()" sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+  <iframe id="ocFrame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals allow-clipboard-write"
     ${iframeSrc} style="${iframeStyle}"></iframe>
 
   <div id="overlay" class="overlay ${overlayHidden ? 'hidden' : ''}">
@@ -1923,38 +2222,6 @@ export class OpenCodePanel implements vscode.WebviewViewProvider {
     function addServer() {
       vscode.postMessage({ type: 'addServer', config: { url: 'http://localhost:4096', label: '' } });
     }
-
-    function sendWorkspace() {
-      const iframe = document.getElementById('ocFrame');
-      const folder = ${JSON.stringify(this.getWorkspaceFolder())};
-      if (iframe && iframe.contentWindow && folder) {
-        const origin = iframe.src ? new URL(iframe.src).origin : '*';
-        const bytes = new TextEncoder().encode(folder);
-        const binary = Array.from(bytes, byte => String.fromCharCode(byte)).join('');
-        const b64 = btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
-        iframe.contentWindow.postMessage(
-          { type: 'openProject', path: folder, dir: b64, source: 'vscode' }, origin
-        );
-      }
-    }
-
-    function syncTheme() {
-      const classes = document.body.className;
-      const theme = classes.includes('vscode-dark') ? 'dark'
-        : classes.includes('vscode-high-contrast') ? 'high-contrast'
-        : 'light';
-      const iframe = document.getElementById('ocFrame');
-      if (iframe && iframe.contentWindow) {
-        const origin = iframe.src ? new URL(iframe.src).origin : '*';
-        iframe.contentWindow.postMessage(
-          { type: 'opencodeTheme', theme, source: 'vscode' }, origin
-        );
-      }
-    }
-
-    syncTheme();
-    const obs = new MutationObserver(syncTheme);
-    obs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
   </script>
 </body>
 </html>`;
