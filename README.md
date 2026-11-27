@@ -129,7 +129,18 @@ If your OpenCode server is password-protected:
 
 ### 2. Cài extension
 
-Clone repo và build VSIX:
+#### Cách A — Tải VSIX từ GitHub Releases (nhanh nhất)
+
+1. Mở: https://github.com/mducng6976/opencode_webui/releases
+2. Tải file `opencode-sidebar-*.vsix` của bản mới nhất
+3. Cài:
+   ```bash
+   code --install-extension opencode-sidebar-<version>.vsix --force
+   ```
+   Hoặc trong VS Code: `Ctrl+Shift+X` → `...` → **Install from VSIX...**
+4. `Ctrl+Shift+P` → **Developer: Reload Window**
+
+#### Cách B — Build từ source
 
 ```bash
 git clone https://github.com/mducng6976/opencode_webui.git
@@ -137,22 +148,10 @@ cd opencode_webui
 npm install
 npm run compile
 npx vsce package
+code --install-extension opencode-sidebar-*.vsix --force
 ```
 
-Cài file VSIX vừa tạo:
-
-```bash
-code --install-extension opencode-sidebar-0.22.0.vsix --force
-```
-
-Hoặc trong VS Code:
-
-1. `Ctrl+Shift+X` → Extensions
-2. Bấm `...` → **Install from VSIX...**
-3. Chọn `opencode-sidebar-0.22.0.vsix`
-4. `Ctrl+Shift+P` → **Developer: Reload Window**
-
-> VSIX không được commit vào repo (đã nằm trong `.gitignore`). Mỗi máy cần build hoặc tải file VSIX từ GitHub Releases (nếu có).
+> VSIX không được commit vào repo (đã nằm trong `.gitignore`). Workflow GitHub Actions sẽ tự build và đính kèm VSIX vào mỗi GitHub Release khi bạn push tag `v*`.
 
 ### 3. Cấu hình
 
@@ -215,3 +214,22 @@ PRs are welcome! If you'd like to contribute, please open an issue first to disc
 3. Press `F5` to launch a new Extension Development Host window.
 4. Run `npm run compile` to rebuild after editing TypeScript files, or `npm run watch` for auto-recompilation.
 5. Check the **OpenCode Sidebar** output channel (View → Output) for debug logs.
+
+### Release
+
+Push a tag that matches the version in `package.json`:
+
+```bash
+git tag v0.22.0
+git push origin v0.22.0
+```
+
+GitHub Actions (`.github/workflows/release.yml`) will:
+
+1. Install dependencies
+2. Run `npm test`
+3. Build `opencode-sidebar-<version>.vsix`
+4. Create a GitHub Release and attach the VSIX
+
+The workflow fails if the tag does not match `package.json`'s version.
+

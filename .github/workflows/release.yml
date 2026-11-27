@@ -1,0 +1,61 @@
+name: Release VSIX
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Verify tag matches package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "v$VERSION" != "${GITHUB_REF_NAME}" ]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json v$VERSION"
+            exit 1
+          fi
+
+      - name: Compile and test
+        run: npm test
+
+      - name: Package VSIX
+        id: package
+        run: |
+          npx vsce package
+          VSIX=$(ls -1 *.vsix | head -n 1)
+          echo "vsix=$VSIX" >> "$GITHUB_OUTPUT"
+          echo "Packaged $VSIX"
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: ${{ steps.package.outputs.vsix }}
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: OpenCode Sidebar ${{ github.ref_name }}
+          files: ${{ steps.package.outputs.vsix }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
