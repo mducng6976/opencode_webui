@@ -114,13 +114,103 @@ If your OpenCode server is password-protected:
 - Credentials are stored in your OS keychain via VS Code SecretStorage.
 - Alternatively, set the `OPENCODE_SERVER_PASSWORD` environment variable and the extension will pick it up automatically.
 
+## Cài đặt trên máy khác
+
+### 1. Yêu cầu
+
+- VS Code `>= 1.106`
+- OpenCode **2.x** đã cài và có trong `PATH`:
+  ```bash
+  opencode --version
+  ```
+  Nếu chưa có, cài theo hướng dẫn tại https://opencode.ai/docs
+- Node.js + npm (chỉ cần khi build từ source)
+- Windows/macOS/Linux. Nút **Start with Proxy** chỉ có trên Windows.
+
+### 2. Cài extension
+
+Clone repo và build VSIX:
+
+```bash
+git clone https://github.com/mducng6976/opencode_webui.git
+cd opencode_webui
+npm install
+npm run compile
+npx vsce package
+```
+
+Cài file VSIX vừa tạo:
+
+```bash
+code --install-extension opencode-sidebar-0.22.0.vsix --force
+```
+
+Hoặc trong VS Code:
+
+1. `Ctrl+Shift+X` → Extensions
+2. Bấm `...` → **Install from VSIX...**
+3. Chọn `opencode-sidebar-0.22.0.vsix`
+4. `Ctrl+Shift+P` → **Developer: Reload Window**
+
+> VSIX không được commit vào repo (đã nằm trong `.gitignore`). Mỗi máy cần build hoặc tải file VSIX từ GitHub Releases (nếu có).
+
+### 3. Cấu hình
+
+Mở **Settings** và tìm `opencode-sidebar`, hoặc sửa `settings.json`:
+
+```jsonc
+{
+  "opencode-sidebar.servers": [
+    {
+      "id": "default",
+      "url": "http://localhost:4096",
+      "label": "Local Server",
+      "isDefault": true,
+      "serverCommand": "opencode serve --port 4096"
+    }
+  ],
+  "opencode-sidebar.proxyOnCommand": "proxy-on",
+  "opencode-sidebar.proxyShell": "powershell.exe"
+}
+```
+
+- `proxyOnCommand`: lệnh bật proxy, chạy trước khi start server (mặc định `proxy-on`).
+- `proxyShell`: `powershell.exe` hoặc `pwsh.exe` nếu `proxy-on` nằm trong profile PowerShell 7.
+
+### 4. Sử dụng
+
+1. `Ctrl+Shift+O` để mở panel OpenCode.
+2. Nếu server chưa chạy, bấm:
+   - **Start OpenCode Web Server** — chạy `opencode serve` ẩn.
+   - **Start with Proxy** — mở cửa sổ PowerShell, chạy `proxy-on` rồi mới chạy `opencode serve`.
+3. Nếu bạn tự chạy server bên ngoài:
+   ```bash
+   opencode serve --port 4096
+   ```
+   Copy dòng `server password ...`, rồi chạy command **OpenCode: Set Server Password** với username `opencode`.
+
+### 5. Troubleshooting
+
+| Lỗi | Cách xử lý |
+|-----|-----------|
+| `OpenCode server is not reachable` | Bấm **Start OpenCode Web Server** hoặc **Start with Proxy** |
+| `opencode` is not recognized | Thêm `opencode` vào PATH, hoặc đặt `serverCommand` thành đường dẫn đầy đủ, ví dụ `C:\npm-global\opencode.cmd serve --port 4096` |
+| Panel hiện **Connect to a server** | Password chưa đúng. Chạy **OpenCode: Set Server Password** (username `opencode`), rồi **Refresh** |
+| Bấm Start with Proxy không thấy cửa sổ | Kiểm tra `proxyShell`; thử `pwsh.exe` nếu dùng PowerShell 7 |
+| Không rõ lỗi | Mở **Output → OpenCode Sidebar** xem log `[server]` |
+
 ## Contributing
 
 PRs are welcome! If you'd like to contribute, please open an issue first to discuss the change.
 
 ### Development
 
-1. Clone the repo and run `npm install`.
+1. Clone the repo and run `npm install`:
+   ```bash
+   git clone https://github.com/mducng6976/opencode_webui.git
+   cd opencode_webui
+   npm install
+   ```
 2. Open the project in VS Code.
 3. Press `F5` to launch a new Extension Development Host window.
 4. Run `npm run compile` to rebuild after editing TypeScript files, or `npm run watch` for auto-recompilation.

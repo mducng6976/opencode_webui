@@ -9,13 +9,13 @@
     "name": "ducnm",
     "email": "mducnguyen69760914@gmail.com"
   },
-  "homepage": "https://github.com/mducng6976/opencode-web-sidebar",
+  "homepage": "https://github.com/mducng6976/opencode_webui",
   "bugs": {
-    "url": "https://github.com/mducng6976/opencode-web-sidebar/issues"
+    "url": "https://github.com/mducng6976/opencode_webui/issues"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/mducng6976/opencode-web-sidebar.git"
+    "url": "https://github.com/mducng6976/opencode_webui.git"
   },
   "engines": {
     "vscode": "^1.106.0"
